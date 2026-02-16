@@ -237,6 +237,59 @@ class GSDFArchive:
         mv: Optional[memoryview] = self.raw_data
         if mv is None: raise ValidationError("No data loaded")
  
+        # Identity and Size (Already checked in _load, but logged here)
+        logger.info("ident string OK")
+        logger.info("size OK")
+
+        # Auth Integrity (Hash 3)
+        auth_block = bytearray(mv[0x160:0x2C0])
+        auth_block[0x20:0x40] = b"\x00" * 32
+        auth_block[0x60:0x160] = b"\x00" * 256
+        if hashlib.sha256(auth_block).digest() != mv[0x180:0x1A0]:
+            raise ValidationError("Auth block hash mismatch")
+        logger.info("auth hash OK")
+
+        # Root Trust Verification
+        if SectionType.ROOT_CERT not in self.sections:
+            raise ValidationError("Root certificate section missing.")
+        logger.info("found a root CA certificate in section 0")
+
+        raw_cert = self.sections[SectionType.ROOT_CERT].data
+        normalized_cert = bytes([b for b in raw_cert if b not in (0x0D, 0x0A)])
+        root_hash = hashlib.sha256(normalized_cert).hexdigest()
+
+        # Validate against Trusted List
+        if root_hash not in self.TRUSTED_CAS:
+            raise ValidationError(f"Untrusted root certificate: {root_hash}")
+        logger.info(f"root certificate OK ({self.TRUSTED_CAS[root_hash]})")
+
+        # Chain & Signature Verification
+        try:
+            sign_cert = x509.load_pem_x509_certificate(raw_cert, default_backend())
+
+            if SectionType.SECOND_CERT in self.sections:
+                logger.info("found a secondary certificate in section 1")
+                cert = x509.load_pem_x509_certificate(self.sections[SectionType.SECOND_CERT].data, default_backend())
+                sign_cert.public_key().verify(
+                    cert.signature, cert.tbs_certificate_bytes,
+                    padding.PKCS1v15(), cert.signature_hash_algorithm
+                )
+                sign_cert = cert
+
+                logger.info("certificate chain OK")
+
+            # Verify signature against the pre-calculated Hash at 0x180
+            sign_cert.public_key().verify(
+                mv[0x1C0:0x2C0].tobytes(),
+                mv[0x180:0x1A0].tobytes(),
+                padding.PKCS1v15(),
+                utils.Prehashed(hashes.SHA256())
+            )
+
+            logger.info("signature OK")
+        except Exception as e:
+            raise ValidationError(f"Signature or Chain verification failed: {str(e)}")
+
         # Section Table Validation
         reqs = self.get_requirements(self.header.payload_type)
 
@@ -250,10 +303,9 @@ class GSDFArchive:
         for k in self.sections:
             if k not in allowed:
                 raise ValidationError(f"Prohibited section {str(k)} ({hex(k)}) found")
+        logger.info("section list OK")
 
-        logger.info("payload requirements OK")
-
-        # Crypto Integrity (Hashes 1, 2, and 3)
+        # File Integrity (Hash 1 & 2)
         if hashlib.sha256(mv[:0x160]).digest() != mv[0x160:0x180]:
             raise ValidationError("Header hash mismatch")
         logger.info("header hash OK")
@@ -261,54 +313,6 @@ class GSDFArchive:
         if hashlib.sha256(mv[0x2C0:]).digest() != mv[0x1A0:0x1C0]:
             raise ValidationError("Payload data hash mismatch")
         logger.info("data hash OK")
-
-        auth_block = bytearray(mv[0x160:0x2C0])
-        auth_block[0x20:0x40] = b"\x00" * 32
-        auth_block[0x60:0x160] = b"\x00" * 256
-        if hashlib.sha256(auth_block).digest() != mv[0x180:0x1A0]:
-            raise ValidationError("Auth block hash mismatch")
-        logger.info("authentication hash OK")
-
-        # Root Trust Verification
-        if SectionType.ROOT_CERT not in self.sections:
-            raise ValidationError("Root certificate section missing.")
-
-        raw_cert = self.sections[SectionType.ROOT_CERT].data
-        normalized_cert = bytes([b for b in raw_cert if b not in (0x0D, 0x0A)])
-        root_hash = hashlib.sha256(normalized_cert).hexdigest()
-
-        if root_hash not in self.TRUSTED_CAS:
-            raise ValidationError(f"untrusted root certificate: {root_hash}")
-        logger.info(f"root certificate OK ({self.TRUSTED_CAS[root_hash]})")
-
-        # Chain & Signature Verification
-        try:
-            root_c = x509.load_pem_x509_certificate(raw_cert, default_backend())
-            sign_c = root_c
-            logger.debug("found a root CA certificate in section 0")
-
-            if SectionType.SECOND_CERT in self.sections:
-                logger.debug("found a secondary certificate in section 1")
-                sec_c = x509.load_pem_x509_certificate(self.sections[SectionType.SECOND_CERT].data, default_backend())
-                root_c.public_key().verify(
-                    sec_c.signature, sec_c.tbs_certificate_bytes,
-                    padding.PKCS1v15(), sec_c.signature_hash_algorithm
-                )
-                sign_c = sec_c
-
-            logger.info("certificate chain OK")
-            logger.info("certificate revocation list verification *TBI*")
-
-            # Verify signature against the pre-calculated Hash 2 at 0x180
-            sign_c.public_key().verify(
-                mv[0x1C0:0x2C0].tobytes(),
-                mv[0x180:0x1A0].tobytes(),
-                padding.PKCS1v15(),
-                utils.Prehashed(hashes.SHA256())
-            )
-            logger.info("certificate signature OK")
-        except Exception as e:
-            raise ValidationError(f"Signature or Chain verification failed: {str(e)}")
 
     def extract(self, output_dir: Union[str, Path]) -> None:
         out_path = Path(output_dir)
@@ -388,7 +392,7 @@ class GSDFArchive:
             meta[0x1C0:0x2C0] = key.sign(meta[0x180:0x1A0], padding.PKCS1v15(), utils.Prehashed(hashes.SHA256()))
 
         Path(output_path).write_bytes(meta + payload)
-        logger.info(f"gsdf created OK ({output_path})")
+        logger.info(f"created OK ({output_path})")
 
     def report(self, file=sys.stdout) -> None:
         lines = [
@@ -470,7 +474,7 @@ def main() -> None:
         if args.command == "read":
             gsdf = GSDFArchive.from_stream(args.source)
             gsdf.verify()
-            logger.info(f"gsdf file {args.source} is valid")
+            logger.info(f"file {args.source} is valid")
             gsdf.report()
             if args.extract:
                 gsdf.extract(args.extract)

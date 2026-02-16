@@ -111,3 +111,32 @@ Outputs to `stderr`
 ``` sh
 python gsdftool.py -vv read file.gsdf --extract ./files
 ```
+
+
+## File format
+
+### Layout
+
+| Offset | Size (Bytes) | Field            | Description                                                                 |
+| ------ | ------------ | ---------------- | --------------------------------------------------------------------------- |
+| 0x00   | 8            | Magic            | Fixed ASCII: `GSDF 10`                                                      |
+| 0x08   | 4            | Total File Size  | Full size of the archive in bytes                                           |
+| 0x0C   | 4            | Payload Type     | Identifies the firmware type                                                |
+| 0x10   | 4            | Version          | Format version                                                              |
+| 0x14   | 4            | Timestamp        | Unix epoch of creation time                                                 |
+| 0x20   | 64           | Name             | Null-terminated ASCII string                                                |
+| 0x60   | 256          | Section Table    | Up to 16 section descriptors (16 bytes each)                                |
+| 0x160  | 32           | Integrity Hash 1 | SHA256 of the Header + Section Table (0x00 to 0x160)                        |
+| 0x180  | 32           | Integrity Hash 3 | SHA256 of the Integrity Block (0x160 to 0x2C0 with Hash 2/Signature zeroed) |
+| 0x1A0  | 32           | Integrity Hash 2 | SHA256 of the Payload Data (0x2C0 to EOF)                                   |
+| 0x1C0  | 256          | Signature        | RSA-256 PKCS#1 v1.5 signature of Integrity Hash 2                           | 
+| 0x2C0  | EOF          | Payload Data     | Concatenated raw binary data for all sections                               |
+
+### Section Descriptor (starting at 0x60, 16 descriptors)
+
+| Size (Bytes) | Field       | Description                                                |
+| ------------ | ----------- | ---------------------------------------------------------- |
+| 4            | Type ID     | The Section Type enum value                                |
+| 4            | Data Offset | Absolute offset in the file where this section data begins |
+| 4            | Data Size   | Size of the raw data in bytes                              |
+| 4            | Padding     | Reserved for alignment                                     |

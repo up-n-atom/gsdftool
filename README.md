@@ -107,3 +107,7 @@ Outputs to `stderr`
 | WARNING |       |
 | INFO    | `-v`  |
 | DEBUG   | `-vv` |
+
+``` sh
+python gsdftool.py -vv read file.gsdf --extract ./files
+```

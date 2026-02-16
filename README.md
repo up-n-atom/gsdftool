@@ -126,9 +126,9 @@ python gsdftool.py -vv read file.gsdf --extract ./files
 | 0x14   | 4            | Timestamp        | Unix epoch of creation time                                                 |
 | 0x20   | 64           | Name             | Null-terminated ASCII string                                                |
 | 0x60   | 256          | Section Table    | Up to 16 section descriptors (16 bytes each)                                |
-| 0x160  | 32           | Integrity Hash 1 | SHA256 of the Header + Section Table (0x00 to 0x160)                        |
-| 0x180  | 32           | Integrity Hash 3 | SHA256 of the Integrity Block (0x160 to 0x2C0 with Hash 2/Signature zeroed) |
-| 0x1A0  | 32           | Integrity Hash 2 | SHA256 of the Payload Data (0x2C0 to EOF)                                   |
+| 0x160  | 32           | Integrity Hash 2 | SHA256 of the Header + Section Table (0x00 to 0x160)                        |
+| 0x180  | 32           | Integrity Hash 1 | SHA256 of the Integrity Block (0x160 to 0x2C0 with Hash 2/Signature zeroed) |
+| 0x1A0  | 32           | Integrity Hash 3 | SHA256 of the Payload Data (0x2C0 to EOF)                                   |
 | 0x1C0  | 256          | Signature        | RSA-256 PKCS#1 v1.5 signature of Integrity Hash 2                           | 
 | 0x2C0  | EOF          | Payload Data     | Concatenated raw binary data for all sections                               |
 

@@ -241,7 +241,7 @@ class GSDFArchive:
         logger.info("ident string OK")
         logger.info("size OK")
 
-        # Auth Integrity (Hash 3)
+        # Auth Integrity (Hash 1)
         auth_block = bytearray(mv[0x160:0x2C0])
         auth_block[0x20:0x40] = b"\x00" * 32
         auth_block[0x60:0x160] = b"\x00" * 256
@@ -305,7 +305,7 @@ class GSDFArchive:
                 raise ValidationError(f"Prohibited section {str(k)} ({hex(k)}) found")
         logger.info("section list OK")
 
-        # File Integrity (Hash 1 & 2)
+        # File Integrity (Hash 2 & 3)
         if hashlib.sha256(mv[:0x160]).digest() != mv[0x160:0x180]:
             raise ValidationError("Header hash mismatch")
         logger.info("header hash OK")

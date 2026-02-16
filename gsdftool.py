@@ -230,9 +230,6 @@ class GSDFArchive:
             if sec is not None:
                 self.sections[sec.type_id] = sec
 
-        logger.info("ident string OK")
-        logger.info("size OK")
-
     def verify(self) -> None:
         mv: Optional[memoryview] = self.raw_data
         if mv is None: raise ValidationError("No data loaded")

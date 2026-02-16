@@ -100,6 +100,7 @@ class GSDFHeader:
             self.name.encode("ascii")[:63]
         )
 
+
 @dataclass
 class GSDFSection:
     type_id: SectionType
@@ -107,7 +108,7 @@ class GSDFSection:
     offset: int = 0
 
     FORMAT: ClassVar[str] = ">III4x"
-    
+
     @property
     def size(self) -> int:
         return len(self.data)

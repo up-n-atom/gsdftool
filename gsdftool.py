@@ -366,11 +366,11 @@ class GSDFArchive:
                 case SectionType.KERNEL_IMG:
                     # uImage format https://github.com/u-boot/u-boot/blob/master/include/image.h
                     if len(section.data) < 0x40 or section.data[:4] != b'\x27\x05\x19\x56':
-                        logger.warning(f"{sec_type.name} is not a uImage header - skipping processor")
+                        logger.warning(f"{sec_type.name} is not a uImage file - skipping processor")
                         continue
 
                     if section.data[0x1E] != 2:
-                        logger.warning(f"uImage is not Kernel (0x02) - skipping processor")
+                        logger.warning(f"uImage is not Kernel type (0x02) - skipping processor")
                         continue
 
                     compression_map = {

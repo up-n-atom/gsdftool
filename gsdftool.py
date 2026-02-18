@@ -103,7 +103,7 @@ class GSDFHeader:
 class GSDFSection:
     type_: SectionType
     data: bytes
-    offset: int = 0
+    offset: int = -1
 
     FORMAT: ClassVar[str] = ">III4x"
 
@@ -120,6 +120,12 @@ class GSDFSection:
         return cls(SectionType(type_), data[offset:offset+size].tobytes(), offset)
 
     def to_bytes(self) -> bytes:
+        # 0x2E0 is the hard boundary where payload data begins
+        if self.offset < 0x2E0:
+            raise ValueError(
+                f"Invalid offset {hex(self.offset)} for section {str(self.type_)}. "
+                f"Payload must start at or after 0x2E0."
+            )
         return struct.pack(self.FORMAT, self.type_.value, self.offset, self.size)
 
 
@@ -250,12 +256,12 @@ class GSDFArchive:
         logger.info("auth hash OK")
 
         # Root Trust Verification
-        if SectionType.ROOT_CERT not in self.sections:
+        if SectionType.ROOT_CERT not in self:
             raise ValidationError("Root certificate section missing.")
 
         logger.info("found a root CA certificate in section 0")
 
-        raw_cert = self.sections[SectionType.ROOT_CERT].data
+        raw_cert = self[SectionType.ROOT_CERT].data
         normalized_cert = bytes([b for b in raw_cert if b not in (0x0D, 0x0A)])
         root_hash = hashlib.sha256(normalized_cert).hexdigest()
 
@@ -269,9 +275,9 @@ class GSDFArchive:
         try:
             sign_cert = x509.load_pem_x509_certificate(raw_cert, default_backend())
 
-            if SectionType.SECOND_CERT in self.sections:
+            if SectionType.SECOND_CERT in self:
                 logger.info("found a secondary certificate in section 1")
-                cert = x509.load_pem_x509_certificate(self.sections[SectionType.SECOND_CERT].data, default_backend())
+                cert = x509.load_pem_x509_certificate(self[SectionType.SECOND_CERT].data, default_backend())
                 sign_cert.public_key().verify(
                     cert.signature, cert.tbs_certificate_bytes,
                     padding.PKCS1v15(), cert.signature_hash_algorithm
@@ -297,14 +303,14 @@ class GSDFArchive:
 
         # Required Check
         for req in reqs["required"]:
-            if req not in self.sections:
+            if req not in self:
                 raise ValidationError(f"Missing required section: {str(req)} ({hex(req)})")
 
         # Prohibited Check
         all_reqs = set(reqs["required"]) | set(reqs["optional"])
 
-        for k in self.sections:
-            if k not in all_reqs:
+        for sec_type in self:
+            if sec_type not in all_reqs:
                 raise ValidationError(f"Prohibited section {str(k)} ({hex(k)}) found")
 
         logger.info("section list OK")
@@ -324,7 +330,7 @@ class GSDFArchive:
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"extracting {len(self.sections)} sections to {out_path.resolve()}")
+        logger.info(f"extracting {len(self)} sections to {out_path.resolve()}")
 
         for sec_type in self:
             section = self[sec_type]

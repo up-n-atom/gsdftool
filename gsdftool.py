@@ -364,6 +364,7 @@ class GSDFArchive:
             match sec_type:
                 # apt install u-boot-tools gzip bzip2 lzma lzop lz4 zstd
                 case SectionType.KERNEL_IMG:
+                    # uImage format https://github.com/u-boot/u-boot/blob/master/include/image.h
                     if len(section.data) < 0x40 or section.data[:4] != b'\x27\x05\x19\x56':
                         logger.warning(f"{sec_type.name} is not a uImage header - skipping processor")
                         continue

@@ -326,7 +326,30 @@ class GSDFArchive:
 
         logger.info("data hash OK")
 
-    def extract(self, output_dir: Union[str, Path]) -> None:
+    def _process(self, *args, auto: bool = False) -> None:
+        import shutil
+        import subprocess
+
+        if args is None:
+            return
+
+        cmd_list = [str(a) for a in args]
+        tool_path = shutil.which(cmd_list[0])
+        cmd_str = f"{' '.join(cmd_list)}"
+
+        if tool_path and auto:
+            logger.info(f"running: {cmd_str}")
+            try:
+                subprocess.run(cmd_list, check=True, capture_output=True)
+                logger.info(f"successfully processed {cmd_list[-1]}")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"{cmd_list[0]} failed: {e.stderr.decode().strip()}")
+        else:
+            status = "available" if tool_path else "not found"
+            logger.debug(f"processor {status}: {cmd_list[0]}")
+            logger.debug(f"command: {cmd_str}")
+
+    def extract(self, output_dir: Union[str, Path], auto_process: bool = False) -> None:
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
@@ -337,6 +360,42 @@ class GSDFArchive:
             dest_path = out_path / sec_type.filename
             dest_path.write_bytes(section.data)
             logger.debug(f"unpacked {str(sec_type)} to {str(dest_path)} ({section.size} bytes)")
+
+            match sec_type:
+                case SectionType.SQUASHFS:
+                    self._process(
+                        "unsquashfs", "-f", "-d", out_path / "rootfs", dest_path,
+                        auto=auto_process
+                    )
+                case SectionType.DTB:
+                    dts_path = dest_path.with_suffix(".dts")
+                    self._process(
+                        "dtc", "-I", "dtb", "-O", "dts", "-o", dts_path, dest_path,
+                        auto=auto_process
+                    )
+                case SectionType.KERNEL_IMG:
+                    compression_map = {
+                            1: ("gz", ["gunzip", "-f", "-k"]),
+                            2: ("bz2", ["bunzip2", "-f", "-k"]),
+                            3: ("lzma", ["unlzma", "-f", "-k"]),
+                            4: ("lzo", ["lzop", "-d", "-f"]),
+                            5: ("lz4", ["lz4", "-d", "-f", "-k"]),
+                            6: ("zst", ["zstd", "-d", "-f", "-k"]),
+                    }
+
+                    ext, decompress_cmd = None, None
+                    if len(section.data) >= 0x40 and section.data[:4] == b'\x27\x05\x19\x56':
+                        ext, decompress_cmd = compression_map.get(section.data[0x1F], (None, None))
+
+                    kernel_path = str(dest_path.with_suffix(f".vmlinux.{ext}"))
+
+                    self._process(
+                         "dumpimage", "-T", "kernel", "-p", "0", "-o", kernel_path, dest_path,
+                         auto=auto_process
+                    )
+
+                    if auto_process and decompress_cmd:
+                        self._process(*decompress_cmd, kernel_path, auto=True)
 
     def create(self, output_path: str, sources: List[Path], key_path: Optional[Path] = None) -> None:
         self.sections.clear()
@@ -463,6 +522,7 @@ def main() -> None:
     p_read = subparsers.add_parser("read", help="Verify or extract an existing archive")
     p_read.add_argument("source", help="Path, URL, or '-' for stdin")
     p_read.add_argument("-e", "--extract", metavar="DIR", help="Directory to extract to")
+    p_read.add_argument("--process", action="store_true", help="Auto-process known payloads")
 
     p_create = subparsers.add_parser("create", help="Create a new archive from files")
     p_create.add_argument("output", help="The filename to create")
@@ -488,7 +548,7 @@ def main() -> None:
             logger.info(f"file {args.source} is valid")
             gsdf.report()
             if args.extract:
-                gsdf.extract(args.extract)
+                gsdf.extract(args.extract, auto_process=args.process)
         elif args.command == "create":
             gsdf = GSDFArchive(payload_type=args.payload)
             source_paths = [Path(s) for s in args.source]

@@ -229,7 +229,7 @@ class GSDFArchive:
             return
 
         if len(mv) < 0x2E0:
-            raise ValueError(("no section data")
+            raise ValueError("no section data")
 
         self.header = GSDFHeader.from_bytes(mv)
 
@@ -386,7 +386,7 @@ class GSDFArchive:
                     }
                     ext, decompress_cmd = compression_map.get(section.data[0x1F], (None, None))
 
-                    kernel_path = str(dest_path.with_suffix(f".vmlinux.{ext}"))
+                    kernel_path = str(dest_path.with_suffix(f".vmlinux.{ext}" if ext is not None else ".vmlinux"))
 
                     self._process(
                          "dumpimage", "-T", "kernel", "-p", "0", "-o", kernel_path, dest_path,

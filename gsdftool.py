@@ -66,12 +66,11 @@ class SectionType(IntEnum):
 class GSDFHeader:
     size: int = 0
     payload_type: PayloadType = PayloadType.OPERATIONAL_FIRMWARE
-    version: int = 1
     timestamp: Optional[int] = None
     name: str = ""
 
     MAGIC: ClassVar[bytes] = b"GSDF 10"
-    FORMAT: ClassVar[str] = ">8sIIII8x64s"
+    FORMAT: ClassVar[str] = ">8sII4xI8x64s"
 
     def __post_init__(self) -> None:
         if self.timestamp is None:
@@ -82,12 +81,12 @@ class GSDFHeader:
         if data[:len(cls.MAGIC)] != cls.MAGIC:
             raise ValueError("Invalid GSDF Magic")
 
-        _, sz, p_type, ver, ts, name = struct.unpack_from(cls.FORMAT, data)
+        _, file_size, payload_type, timestamp, name = struct.unpack_from(cls.FORMAT, data)
 
-        if sz != len(data):
-            raise ValueError(f"Size mismatch: Header says {sz}, file is {len(data)}")
+        if file_size != len(data):
+            raise ValueError(f"Size mismatch: Header says {f_size}, file is {len(data)}")
 
-        return cls(sz, PayloadType(p_type), ver, ts, name.decode("ascii", errors="ignore"))
+        return cls(file_size, PayloadType(payload_type), timestamp, name.decode("ascii", errors="ignore"))
 
     def to_bytes(self) -> bytes:
         return struct.pack(
@@ -95,7 +94,6 @@ class GSDFHeader:
             self.MAGIC, 
             self.size,
             self.payload_type.value,
-            self.version,
             self.timestamp,
             self.name.encode("ascii")[:63]
         )
@@ -103,7 +101,7 @@ class GSDFHeader:
 
 @dataclass
 class GSDFSection:
-    type_id: SectionType
+    type_: SectionType
     data: bytes
     offset: int = 0
 
@@ -115,14 +113,14 @@ class GSDFSection:
 
     @classmethod
     def from_bytes(cls, data: memoryview, offset: int = 0x60) -> Optional[GSDFSection]:
-        s_type, s_offset, s_size = struct.unpack_from(cls.FORMAT, data, offset)
-        if s_type == 0:
+        type_, offset, size = struct.unpack_from(cls.FORMAT, data, offset)
+        if type_ == 0:
             return None
 
-        return cls(SectionType(s_type), data[s_offset:s_offset+s_size].tobytes(), s_offset)
+        return cls(SectionType(type_), data[offset:offset+size].tobytes(), offset)
 
     def to_bytes(self) -> bytes:
-        return struct.pack(self.FORMAT, self.type_id.value, self.offset, self.size)
+        return struct.pack(self.FORMAT, self.type_.value, self.offset, self.size)
 
 
 class ValidationError(Exception):
@@ -146,10 +144,10 @@ class GSDFArchive:
 
     def __init__(self, data: Optional[bytes] = None, payload_type: PayloadType = PayloadType.OPERATIONAL_FIRMWARE) -> None:
         self.sections: Dict[SectionType, GSDFSection] = {}
-        self.raw_data: Optional[memoryview] = None
+        self.data: Optional[memoryview] = None
 
         if data:
-            self.raw_data = memoryview(data)
+            self.data = memoryview(data)
             self._load()
         else:
             self.header = GSDFHeader(payload_type=payload_type)
@@ -166,14 +164,13 @@ class GSDFArchive:
 
     @classmethod
     def from_url(cls, url: str) -> GSDFArchive:
-        import urllib.request
-        import urllib.error
+        from urllib import request, error
         try:
-            with urllib.request.urlopen(url, timeout=10) as response:
+            with request.urlopen(url, timeout=10) as response:
                 return cls(response.read())
-        except urllib.error.HTTPError as e:
+        except error.HTTPError as e:
             raise ConnectionError(f"HTTP Error {e.code}: {e.reason}")
-        except urllib.error.URLError as e:
+        except error.URLError as e:
             raise ConnectionError(f"Network unreachable: {e.reason}")
 
     @classmethod
@@ -189,18 +186,18 @@ class GSDFArchive:
         return cls.from_file(source, **kwargs)
 
     @classmethod
-    def get_requirements(cls, p_type: PayloadType) -> Dict[str, List[SectionType]]:
-        p_base = next(iter(PayloadType)).value
-        s_base = next(iter(SectionType)).value
-        idx = p_type.value - p_base
-
-        req_mask = cls.REQUIRED_MASKS[idx] if 0 <= idx < len(cls.REQUIRED_MASKS) else 0
-        all_mask = cls.ALLOWED_MASKS[idx] if 0 <= idx < len(cls.ALLOWED_MASKS) else 0
-
+    def get_requirements(cls, payload_type: PayloadType) -> Dict[str, List[SectionType]]:
         def mask_to_list(mask):
-            return [SectionType(s_base + i) for i in range(32) if (mask & (1 << i))]
+            return [SectionType(section_zero + i) for i in range(32) if (mask & (1 << i))]
 
-        return {"required": mask_to_list(req_mask), "optional": mask_to_list(all_mask)}
+        payload_zero = next(iter(PayloadType)).value
+        section_zero = next(iter(SectionType)).value
+        index = payload_type.value - payload_zero
+
+        required_mask = cls.REQUIRED_MASKS[index] if 0 <= index < len(cls.REQUIRED_MASKS) else 0
+        all_mask = cls.ALLOWED_MASKS[index] if 0 <= index < len(cls.ALLOWED_MASKS) else 0
+
+        return {"required": mask_to_list(required_mask), "optional": mask_to_list(all_mask)}
 
     def __len__(self) -> int:
         return len(self.sections)
@@ -212,27 +209,31 @@ class GSDFArchive:
         if isinstance(key, SectionType):
             return self.sections[key]
 
-        ordered_sections = sorted(self.sections.values(), key=lambda s: s.offset)
+        sections = sorted(self.sections.values(), key=lambda s: s.offset)
 
         if isinstance(key, (int, slice)):
-            return ordered_sections[key]
+            return sections[key]
 
         raise TypeError(f"Invalid index type: {type(key)}")
 
     def _load(self) -> None:
-        mv: Optional[memoryview] = self.raw_data
-        if mv is None: return
+        mv: Optional[memoryview] = self.data
+
+        if mv is None:
+            return
 
         self.header = GSDFHeader.from_bytes(mv)
 
         for i in range(16):
-            sec = GSDFSection.from_bytes(mv, 0x60 + (i * struct.calcsize(GSDFSection.FORMAT)))
-            if sec is not None:
-                self.sections[sec.type_id] = sec
+            section = GSDFSection.from_bytes(mv, 0x60 + (i * struct.calcsize(GSDFSection.FORMAT)))
+            if section is not None:
+                self.sections[section.type_] = section
 
     def verify(self) -> None:
-        mv: Optional[memoryview] = self.raw_data
-        if mv is None: raise ValidationError("No data loaded")
+        mv: Optional[memoryview] = self.data
+
+        if mv is None:
+            raise ValidationError("No data loaded")
  
         # Identity and Size (Already checked in _load, but logged here)
         logger.info("ident string OK")
@@ -242,13 +243,16 @@ class GSDFArchive:
         auth_block = bytearray(mv[0x160:0x2C0])
         auth_block[0x20:0x40] = b"\x00" * 32
         auth_block[0x60:0x160] = b"\x00" * 256
+
         if hashlib.sha256(auth_block).digest() != mv[0x180:0x1A0]:
             raise ValidationError("Auth block hash mismatch")
+
         logger.info("auth hash OK")
 
         # Root Trust Verification
         if SectionType.ROOT_CERT not in self.sections:
             raise ValidationError("Root certificate section missing.")
+
         logger.info("found a root CA certificate in section 0")
 
         raw_cert = self.sections[SectionType.ROOT_CERT].data
@@ -258,6 +262,7 @@ class GSDFArchive:
         # Validate against Trusted List
         if root_hash not in self.TRUSTED_CAS:
             raise ValidationError(f"Untrusted root certificate: {root_hash}")
+
         logger.info(f"root certificate OK ({self.TRUSTED_CAS[root_hash]})")
 
         # Chain & Signature Verification
@@ -296,19 +301,23 @@ class GSDFArchive:
                 raise ValidationError(f"Missing required section: {str(req)} ({hex(req)})")
 
         # Prohibited Check
-        allowed = set(reqs["required"]) | set(reqs["optional"])
+        all_reqs = set(reqs["required"]) | set(reqs["optional"])
+
         for k in self.sections:
-            if k not in allowed:
+            if k not in all_reqs:
                 raise ValidationError(f"Prohibited section {str(k)} ({hex(k)}) found")
+
         logger.info("section list OK")
 
         # File Integrity (Hash 2 & 3)
         if hashlib.sha256(mv[:0x160]).digest() != mv[0x160:0x180]:
             raise ValidationError("Header hash mismatch")
+
         logger.info("header hash OK")
 
         if hashlib.sha256(mv[0x2C0:]).digest() != mv[0x1A0:0x1C0]:
             raise ValidationError("Payload data hash mismatch")
+
         logger.info("data hash OK")
 
     def extract(self, output_dir: Union[str, Path]) -> None:
@@ -317,11 +326,11 @@ class GSDFArchive:
 
         logger.info(f"extracting {len(self.sections)} sections to {out_path.resolve()}")
 
-        for s_type in self:
-            sec = self[s_type]
-            dest = out_path / s_type.filename
-            dest.write_bytes(sec.data)
-            logger.debug(f"unpacked {str(s_type)} to {str(dest)} ({sec.size} bytes)")
+        for sec_type in self:
+            section = self[sec_type]
+            dest_path = out_path / sec_type.filename
+            dest_path.write_bytes(section.data)
+            logger.debug(f"unpacked {str(sec_type)} to {str(dest_path)} ({section.size} bytes)")
 
     def create(self, output_path: str, sources: List[Path], key_path: Optional[Path] = None) -> None:
         self.sections.clear()
@@ -331,28 +340,28 @@ class GSDFArchive:
 
         for src in sources:
             if src.is_dir():
-                for s_type in SectionType:
-                    file_path = src / s_type.filename
+                for sec_type in SectionType:
+                    file_path = src / sec_type.filename
                     if file_path.exists():
-                        available_files[s_type] = file_path
+                        available_files[sec_type] = file_path
             elif src.is_file():
                 stem = src.name.lower().removesuffix(".bin").upper()
                 try:
-                    s_type = SectionType[stem]
-                    available_files[s_type] = src
+                    sec_type = SectionType[stem]
+                    available_files[sec_type] = src
                 except KeyError:
                     logger.warning(f"skipping unrecognized file {src.name}")
 
         # Validate against requirements
         reqs = self.get_requirements(self.payload_type)
-        allowed = set(reqs["required"]) | set(reqs["optional"])
+        all_reqs = set(reqs["required"]) | set(reqs["optional"])
 
-        for s_type, file_path in available_files.items():
-            if s_type in allowed:
-                self.sections[s_type] = GSDFSection(s_type, file_path.read_bytes())
-                logger.debug(f"packed {s_type.name} from {file_path.name}")
+        for sec_type, file_path in available_files.items():
+            if sec_type in all_reqs:
+                self.sections[sec_type] = GSDFSection(sec_type, file_path.read_bytes())
+                logger.debug(f"packed {sec_type.name} from {file_path.name}")
             else:
-                logger.warning(f"{s_type.name} is not allowed for {self.payload_type.name}. skipping.")
+                logger.warning(f"{sec_type.name} is not allowed for {self.payload_type.name}. skipping.")
 
         # Check for missing required sections
         for req in reqs["required"]:
@@ -360,35 +369,35 @@ class GSDFArchive:
                 raise ValidationError(f"Missing required section: {str(req)}")
 
         # Sort and calculate offsets
-        sorted_keys = sorted(self.sections.keys())
-        payload = b"".join(self.sections[k].data for k in sorted_keys)
+        sorted_types = sorted(self.sections.keys())
+        payload = b"".join(self.sections[sec_type].data for sec_type in sorted_types)
 
-        meta = bytearray(0x2E0)
+        data = bytearray(0x2E0)
         # Padding
-        meta[0x2C0:0x2E0] = b"\xFF" * 32
+        data[0x2C0:0x2E0] = b"\xFF" * 32
 
-        offset = len(meta)
+        offset = len(data)
 
         # Section Table
-        for i, k in enumerate(sorted_keys):
-            self.sections[k].offset = offset
-            meta[0x60+(i*16):0x60+(i+1)*16] = self.sections[k].to_bytes()
-            offset += self.sections[k].size
+        for i, sec_type in enumerate(sorted_types):
+            self.sections[sec_type].offset = offset
+            data[0x60+(i*16):0x60+(i+1)*16] = self.sections[sec_type].to_bytes()
+            offset += self.sections[sec_type].size
 
         # Header
         self.header.size = offset
-        meta[0:0x60] = self.header.to_bytes()
+        data[0:0x60] = self.header.to_bytes()
 
         # Hashes & Signature
-        meta[0x1A0:0x1C0] = hashlib.sha256(payload).digest()
-        meta[0x160:0x180] = hashlib.sha256(meta[:0x160]).digest()
-        meta[0x180:0x1A0] = hashlib.sha256(meta[0x160:0x2C0]).digest()
+        data[0x1A0:0x1C0] = hashlib.sha256(payload).digest()
+        data[0x160:0x180] = hashlib.sha256(data[:0x160]).digest()
+        data[0x180:0x1A0] = hashlib.sha256(data[0x160:0x2C0]).digest()
 
         if key_path:
             key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
-            meta[0x1C0:0x2C0] = key.sign(meta[0x180:0x1A0], padding.PKCS1v15(), utils.Prehashed(hashes.SHA256()))
+            data[0x1C0:0x2C0] = key.sign(data[0x180:0x1A0], padding.PKCS1v15(), utils.Prehashed(hashes.SHA256()))
 
-        Path(output_path).write_bytes(meta + payload)
+        Path(output_path).write_bytes(data + payload)
         logger.info(f"created OK ({output_path})")
 
     def report(self, file=sys.stdout) -> None:
@@ -398,7 +407,6 @@ class GSDFArchive:
             "=" * 100,
             f"{'Name:':<15} {self.header.name}",
             f"{'Payload Type:':<15} {str(self.header.payload_type).title()} ({hex(self.header.payload_type.value)})",
-            f"{'Version:':<15} {self.header.version}",
             f"{'Timestamp:':<15} {datetime.fromtimestamp(self.header.timestamp)}",
             f"{'Total Size:':<15} {self.header.size} bytes",
             "=" * 100,
@@ -408,14 +416,14 @@ class GSDFArchive:
             "-" * 100
         ]
 
-        for s_type in self:
-            sec = self[s_type]
-            if s_type in (SectionType.ROOT_CERT, SectionType.SECOND_CERT):
-                preview = sec.data[:45].decode("ascii", errors="ignore").replace("\n", "<CR>")
+        for sec_type in self:
+            section = self[sec_type]
+            if sec_type in (SectionType.ROOT_CERT, SectionType.SECOND_CERT):
+                preview = section.data[:45].decode("ascii", errors="ignore").replace("\n", "<CR>")
             else:
-                preview = sec.data[:16].hex(" ")
+                preview = section.data[:16].hex(" ")
 
-            lines.append(f"{str(s_type):<15} {hex(sec.offset):<10} {sec.size:<15} {preview}")
+            lines.append(f"{str(sec_type):<15} {hex(section.offset):<10} {section.size:<15} {preview}")
 
         print("\n".join(lines), file=file)
 
@@ -428,11 +436,11 @@ class ListPayloadsAction(argparse.Action):
         print(f"{'ID':<6} {'Payload Type':<25} {'Requirements'}")
         print("-" * 100)
 
-        for p in PayloadType:
-            reqs = GSDFArchive.get_requirements(p)
+        for payload_type in PayloadType:
+            reqs = GSDFArchive.get_requirements(payload_type)
             req_str = ", ".join(str(r) for r in reqs["required"])
             opt_str = f" (optional: {", ".join(str(s) for s in reqs['optional'])})" if reqs["optional"] else ""
-            print(f"{hex(p.value):<6} {str(p).title():<25} {req_str}{opt_str}")
+            print(f"{hex(payload_type.value):<6} {str(payload_type).title():<25} {req_str}{opt_str}")
 
         parser.exit()
 

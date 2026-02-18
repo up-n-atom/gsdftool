@@ -231,7 +231,7 @@ class ProcessorFactory:
 
 class GSDFArchive:
     # From libgsdf.so.1.0.0
-    TRUSTED_CAS: Dict[str, str] = {
+    _TRUSTED_CAS: Dict[str, str] = {
         "1263a2056501171b5e0ba777b0894d1655ddf621a38ebc8da96159122a1ba2dd": "Sagemcom caCert",
         "4c1501be33c5bd93e5b0dada2b32bcdcf695154b87890a7feb29fa68b50331a1": "Telstra GTW Devices Sign Firmware CA",
         "27707c8e81f9989d8aed361189e04bf04283dd478cc1d6eb8016dc1d4e3a1ff1": "Teo GTW Devices Sign Firmware CA",
@@ -241,8 +241,8 @@ class GSDFArchive:
     }
 
     # From libgsdf.so.1.0.0
-    REQUIRED_MASKS: List[int] = [0x800181, 0x800181, 0x101, 0x9, 0x1, 0x800081, 0x800081, 0x800081, 0x5, 0x5]
-    ALLOWED_MASKS: List[int] = [0x202, 0x202, 0x2, 0x2, 0x700072, 0x202, 0x202, 0x202, 0x2, 0x2]
+    _REQUIRED_MASKS: List[int] = [0x800181, 0x800181, 0x101, 0x9, 0x1, 0x800081, 0x800081, 0x800081, 0x5, 0x5]
+    _ALLOWED_MASKS: List[int] = [0x202, 0x202, 0x2, 0x2, 0x700072, 0x202, 0x202, 0x202, 0x2, 0x2]
 
     def __init__(self, data: Optional[bytes] = None, payload_type: PayloadType = PayloadType.OPERATIONAL_FIRMWARE) -> None:
         self.sections: Dict[SectionType, GSDFSection] = {}
@@ -296,8 +296,8 @@ class GSDFArchive:
         section_zero = next(iter(SectionType)).value
         index = payload_type.value - payload_zero
 
-        required_mask = cls.REQUIRED_MASKS[index] if 0 <= index < len(cls.REQUIRED_MASKS) else 0
-        all_mask = cls.ALLOWED_MASKS[index] if 0 <= index < len(cls.ALLOWED_MASKS) else 0
+        required_mask = cls._REQUIRED_MASKS[index] if 0 <= index < len(cls._REQUIRED_MASKS) else 0
+        all_mask = cls._ALLOWED_MASKS[index] if 0 <= index < len(cls._ALLOWED_MASKS) else 0
 
         return {"required": mask_to_list(required_mask), "optional": mask_to_list(all_mask)}
 
@@ -365,10 +365,10 @@ class GSDFArchive:
         root_hash = hashlib.sha256(normalized_cert).hexdigest()
 
         # Validate against Trusted List
-        if root_hash not in self.TRUSTED_CAS:
+        if root_hash not in self._TRUSTED_CAS:
             raise ValidationError(f"Untrusted root certificate: {root_hash}")
 
-        logger.info(f"root certificate OK ({self.TRUSTED_CAS[root_hash]})")
+        logger.info(f"root certificate OK ({self._TRUSTED_CAS[root_hash]})")
 
         # Chain & Signature Verification
         try:

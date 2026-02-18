@@ -120,14 +120,23 @@ python gsdftool.py -vv read file.gsdf --extract ./files
 
 ### Processing
 
-The payloads can be further extracted. The following packages are required:
+The following payload sections can be further extracted:
 
-#### Debian/Ubuntu
+* kernel img
+* squashfs
+* dtb
+
+#### Debian/Ubuntu package requirements
 
 ``` sh
 apt install -y squashfs-tools device-tree-compiler u-boot-tools gzip bzip2 lzma lzop lz4 zstd
 ```
 
+#### Fedora/RedHat package requirements
+
+``` sh
+dnf -y install squashfs-tools dtc uboot-tools gzip bzip2 xz-lzma-compat lzop lz4 zstd
+```
 
 ## File format
 

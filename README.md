@@ -22,6 +22,11 @@ python gsdftool.py read file.gsdf
 python gsdftool.py read file.gsdf --extract ./files
 ```
 
+### Process extracted sections
+``` sh
+python gsdftool.py read file.gsdf --extract ./files --process
+```
+
 ### Remote inspection
 
 ``` sh
@@ -62,6 +67,7 @@ positional arguments:
 options:
   -h, --help         show this help message and exit
   -e, --extract DIR  Directory to extract to
+  --process          Auto-process known payloads
 ```
 
 ### `create` command
@@ -110,6 +116,16 @@ Outputs to `stderr`
 
 ``` sh
 python gsdftool.py -vv read file.gsdf --extract ./files
+```
+
+### Processing
+
+The payloads can be further extracted. The following packages are required:
+
+#### Debian/Ubuntu
+
+``` sh
+apt install -y squashfs-tools device-tree-compiler u-boot-tools gzip bzip2 lzma lzop lz4 zstd
 ```
 
 

@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass
 from enum import IntEnum
+from abc import ABC, abstractmethod
 from typing import Dict, Optional, Union, List, Any, Set, ClassVar
 
 # pip install cryptography
@@ -20,6 +21,10 @@ from cryptography.hazmat.backends import default_backend
 
 
 logger = logging.getLogger("gsdf")
+
+
+class ValidationError(Exception):
+    pass
 
 
 class PayloadType(IntEnum):
@@ -90,8 +95,8 @@ class GSDFHeader:
 
     def to_bytes(self) -> bytes:
         return struct.pack(
-            self.FORMAT, 
-            self.MAGIC, 
+            self.FORMAT,
+            self.MAGIC,
             self.size,
             self.payload_type.value,
             self.timestamp,
@@ -129,8 +134,99 @@ class GSDFSection:
         return struct.pack(self.FORMAT, self.type_.value, self.offset, self.size)
 
 
-class ValidationError(Exception):
-    pass
+class SectionProcessor(ABC):
+    @abstractmethod
+    def process(self, section: GSDFSection, output_dir: Path, auto: bool = False) -> None:
+        pass
+
+    def _run_cmd(self, *args, auto: bool) -> None:
+        import shutil
+        import subprocess
+
+        if args is None:
+            return
+
+        cmd_list = [str(a) for a in args]
+        tool_path = shutil.which(cmd_list[0])
+        cmd_str = f"{' '.join(cmd_list)}"
+
+        if tool_path and auto:
+            logger.info(f"running: {cmd_str}")
+            try:
+                subprocess.run(cmd_list, check=True, capture_output=True)
+                logger.info(f"successfully processed {cmd_list[-1]}")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"{cmd_list[0]} failed: {e.stderr.decode().strip()}")
+        else:
+            status = "available" if tool_path else "not found"
+            logger.debug(f"processor {status}: {cmd_list[0]}")
+            logger.debug(f"command: {cmd_str}")
+
+
+class KernelProcessor(SectionProcessor):
+    _UIMAGE_MAGIC = b'\x27\x05\x19\x56'
+
+    _COMPRESSION_MAP = {
+        1: ("gz", ["gunzip", "-f", "-k"]),
+        2: ("bz2", ["bunzip2", "-f", "-k"]),
+        3: ("lzma", ["unlzma", "-f", "-k"]),
+        4: ("lzo", ["lzop", "-d", "-f"]),
+        5: ("lz4", ["unlz4", "-f", "-k"]),
+        6: ("zst", ["unzstd", "-f", "-k"]),
+    }
+
+    def process(self, section: GSDFSection, output_dir: Path, auto: bool = False) -> None:
+        # uImage format https://github.com/u-boot/u-boot/blob/master/include/image.h
+        if len(section.data) < 0x40 or section.data[:4] != self._UIMAGE_MAGIC:
+            logger.warning(f"{section.type_.name} is not a uImage file - skipping processor")
+            return
+
+        if section.data[0x1E] != 2:
+            logger.warning(f"uImage is not Kernel type (0x02) - skipping processor")
+            return
+
+        ext, decompress_cmd = self._COMPRESSION_MAP.get(section.data[0x1F], (None, None))
+
+        img_path = output_dir / section.type_.filename
+        kernel_path = str(img_path.with_suffix(f".vmlinux.{ext}" if ext is not None else ".vmlinux"))
+
+        self._run_cmd(
+            "dumpimage", "-T", "kernel", "-p", "0", "-o", kernel_path, img_path,
+            auto=auto
+        )
+
+        if auto and decompress_cmd:
+            self._run_cmd(*decompress_cmd, kernel_path, auto=True)
+
+
+class SquashFSProcessor(SectionProcessor):
+    def process(self, section: GSDFSection, output_dir: Path, auto: bool = False) -> None:
+        self._run_cmd(
+            "unsquashfs", "-f", "-d", output_dir / "rootfs", output_dir / section.type_.filename,
+            auto=auto
+        )
+
+
+class DeviceTreeProcessor(SectionProcessor):
+    def process(self, section: GSDFSection, output_dir: Path, auto: bool = False) -> None:
+        dtb_path = output_dir / section.type_.filename
+        dts_path = (dtb_path).with_suffix(".dts")
+        self._run_cmd(
+            "dtc", "-I", "dtb", "-O", "dts", "-o", dts_path, dtb_path,
+            auto=auto
+        )
+
+
+class ProcessorFactory:
+    _PROCESSORS: Dict[SectionType, SectionProcessor] = {
+        SectionType.KERNEL_IMG: KernelProcessor(),
+        SectionType.SQUASHFS: SquashFSProcessor(),
+        SectionType.DTB: DeviceTreeProcessor(),
+    }
+
+    @classmethod
+    def get_processor(cls, section_type: SectionType) -> Optional[SectionProcessor]:
+        return cls._PROCESSORS.get(section_type)
 
 
 class GSDFArchive:
@@ -243,7 +339,7 @@ class GSDFArchive:
 
         if mv is None:
             raise ValidationError("No data loaded")
- 
+
         # Identity and Size (Already checked in _load, but logged here)
         logger.info("ident string OK")
         logger.info("size OK")
@@ -329,29 +425,6 @@ class GSDFArchive:
 
         logger.info("data hash OK")
 
-    def _process(self, *args, auto: bool = False) -> None:
-        import shutil
-        import subprocess
-
-        if args is None:
-            return
-
-        cmd_list = [str(a) for a in args]
-        tool_path = shutil.which(cmd_list[0])
-        cmd_str = f"{' '.join(cmd_list)}"
-
-        if tool_path and auto:
-            logger.info(f"running: {cmd_str}")
-            try:
-                subprocess.run(cmd_list, check=True, capture_output=True)
-                logger.info(f"successfully processed {cmd_list[-1]}")
-            except subprocess.CalledProcessError as e:
-                logger.error(f"{cmd_list[0]} failed: {e.stderr.decode().strip()}")
-        else:
-            status = "available" if tool_path else "not found"
-            logger.debug(f"processor {status}: {cmd_list[0]}")
-            logger.debug(f"command: {cmd_str}")
-
     def extract(self, output_dir: Union[str, Path], auto_process: bool = False) -> None:
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
@@ -364,50 +437,9 @@ class GSDFArchive:
             dest_path.write_bytes(section.data)
             logger.debug(f"unpacked {str(sec_type)} to {str(dest_path)} ({section.size} bytes)")
 
-            match sec_type:
-                # apt install u-boot-tools gzip bzip2 lzma lzop lz4 zstd
-                case SectionType.KERNEL_IMG:
-                    # uImage format https://github.com/u-boot/u-boot/blob/master/include/image.h
-                    if len(section.data) < 0x40 or section.data[:4] != b'\x27\x05\x19\x56':
-                        logger.warning(f"{sec_type.name} is not a uImage file - skipping processor")
-                        continue
-
-                    if section.data[0x1E] != 2:
-                        logger.warning(f"uImage is not Kernel type (0x02) - skipping processor")
-                        continue
-
-                    compression_map = {
-                        1: ("gz", ["gunzip", "-f", "-k"]),
-                        2: ("bz2", ["bunzip2", "-f", "-k"]),
-                        3: ("lzma", ["unlzma", "-f", "-k"]),
-                        4: ("lzo", ["lzop", "-d", "-f"]),
-                        5: ("lz4", ["unlz4", "-f", "-k"]),
-                        6: ("zst", ["unzstd", "-f", "-k"]),
-                    }
-                    ext, decompress_cmd = compression_map.get(section.data[0x1F], (None, None))
-
-                    kernel_path = str(dest_path.with_suffix(f".vmlinux.{ext}" if ext is not None else ".vmlinux"))
-
-                    self._process(
-                         "dumpimage", "-T", "kernel", "-p", "0", "-o", kernel_path, dest_path,
-                         auto=auto_process
-                    )
-
-                    if auto_process and decompress_cmd:
-                        self._process(*decompress_cmd, kernel_path, auto=True)
-                # apt install squashfs-tools
-                case SectionType.SQUASHFS:
-                    self._process(
-                        "unsquashfs", "-f", "-d", out_path / "rootfs", dest_path,
-                        auto=auto_process
-                    )
-                # apt install device-tree-compiler
-                case SectionType.DTB:
-                    dts_path = dest_path.with_suffix(".dts")
-                    self._process(
-                        "dtc", "-I", "dtb", "-O", "dts", "-o", dts_path, dest_path,
-                        auto=auto_process
-                    )
+            processor = ProcessorFactory.get_processor(sec_type)
+            if processor:
+                processor.process(section, out_path, auto=auto_process)
 
     def create(self, output_path: str, sources: List[Path], key_path: Optional[Path] = None) -> None:
         self.sections.clear()
@@ -526,7 +558,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="GSDF Tool")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity (-v, -vv)")
 
-    parser.add_argument("--list-payloads", action=ListPayloadsAction, 
+    parser.add_argument("--list-payloads", action=ListPayloadsAction,
                         help="Show payload requirements")
 
     subparsers = parser.add_subparsers(dest="command", required=True)

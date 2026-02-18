@@ -362,20 +362,7 @@ class GSDFArchive:
             logger.debug(f"unpacked {str(sec_type)} to {str(dest_path)} ({section.size} bytes)")
 
             match sec_type:
-                # apt install squashfs-tools
-                case SectionType.SQUASHFS:
-                    self._process(
-                        "unsquashfs", "-f", "-d", out_path / "rootfs", dest_path,
-                        auto=auto_process
-                    )
-                # apt install device-tree-compiler
-                case SectionType.DTB:
-                    dts_path = dest_path.with_suffix(".dts")
-                    self._process(
-                        "dtc", "-I", "dtb", "-O", "dts", "-o", dts_path, dest_path,
-                        auto=auto_process
-                    )
-                # apt install u-boot-tools gzip, bzip2, lzma, lzop, lz4, zstd
+                # apt install u-boot-tools gzip bzip2 lzma lzop lz4 zstd
                 case SectionType.KERNEL_IMG:
                     compression_map = {
                             1: ("gz", ["gunzip", "-f", "-k"]),
@@ -399,6 +386,19 @@ class GSDFArchive:
 
                     if auto_process and decompress_cmd:
                         self._process(*decompress_cmd, kernel_path, auto=True)
+                # apt install squashfs-tools
+                case SectionType.SQUASHFS:
+                    self._process(
+                        "unsquashfs", "-f", "-d", out_path / "rootfs", dest_path,
+                        auto=auto_process
+                    )
+                # apt install device-tree-compiler
+                case SectionType.DTB:
+                    dts_path = dest_path.with_suffix(".dts")
+                    self._process(
+                        "dtc", "-I", "dtb", "-O", "dts", "-o", dts_path, dest_path,
+                        auto=auto_process
+                    )
 
     def create(self, output_path: str, sources: List[Path], key_path: Optional[Path] = None) -> None:
         self.sections.clear()

@@ -378,8 +378,8 @@ class GSDFArchive:
                         2: ("bz2", ["bunzip2", "-f", "-k"]),
                         3: ("lzma", ["unlzma", "-f", "-k"]),
                         4: ("lzo", ["lzop", "-d", "-f"]),
-                        5: ("lz4", ["lz4", "-d", "-f", "-k"]),
-                        6: ("zst", ["zstd", "-d", "-f", "-k"]),
+                        5: ("lz4", ["unlz4", "-f", "-k"]),
+                        6: ("zst", ["unzstd", "-f", "-k"]),
                     }
                     ext, decompress_cmd = compression_map.get(section.data[0x1F], (None, None))
 

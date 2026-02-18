@@ -228,6 +228,9 @@ class GSDFArchive:
         if mv is None:
             return
 
+        if len(mv) < 0x2E0:
+            raise ValueError(("no section data")
+
         self.header = GSDFHeader.from_bytes(mv)
 
         for i in range(16):
@@ -562,7 +565,7 @@ def main() -> None:
             gsdf = GSDFArchive(payload_type=args.payload)
             source_paths = [Path(s) for s in args.source]
             gsdf.create(args.output, sources=source_paths, key_path=args.key)
-    except (ValidationError, ConnectionError, FileNotFoundError) as e:
+    except (ValueError, ValidationError, ConnectionError, FileNotFoundError) as e:
         logger.error(f"{e}")
         sys.exit(1)
 

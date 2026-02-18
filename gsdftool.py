@@ -364,18 +364,23 @@ class GSDFArchive:
             match sec_type:
                 # apt install u-boot-tools gzip bzip2 lzma lzop lz4 zstd
                 case SectionType.KERNEL_IMG:
-                    compression_map = {
-                            1: ("gz", ["gunzip", "-f", "-k"]),
-                            2: ("bz2", ["bunzip2", "-f", "-k"]),
-                            3: ("lzma", ["unlzma", "-f", "-k"]),
-                            4: ("lzo", ["lzop", "-d", "-f"]),
-                            5: ("lz4", ["lz4", "-d", "-f", "-k"]),
-                            6: ("zst", ["zstd", "-d", "-f", "-k"]),
-                    }
+                    if len(section.data) < 0x40 or section.data[:4] != b'\x27\x05\x19\x56':
+                        logger.warning(f"{sec_type.name} is not a uImage header - skipping processor")
+                        continue
 
-                    ext, decompress_cmd = None, None
-                    if len(section.data) >= 0x40 and section.data[:4] == b'\x27\x05\x19\x56':
-                        ext, decompress_cmd = compression_map.get(section.data[0x1F], (None, None))
+                    if section.data[0x1E] != 2:
+                        logger.warning(f"uImage is not Kernel (0x02) - skipping processor")
+                        continue
+
+                    compression_map = {
+                        1: ("gz", ["gunzip", "-f", "-k"]),
+                        2: ("bz2", ["bunzip2", "-f", "-k"]),
+                        3: ("lzma", ["unlzma", "-f", "-k"]),
+                        4: ("lzo", ["lzop", "-d", "-f"]),
+                        5: ("lz4", ["lz4", "-d", "-f", "-k"]),
+                        6: ("zst", ["zstd", "-d", "-f", "-k"]),
+                    }
+                    ext, decompress_cmd = compression_map.get(section.data[0x1F], (None, None))
 
                     kernel_path = str(dest_path.with_suffix(f".vmlinux.{ext}"))
 

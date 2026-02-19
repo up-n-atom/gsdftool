@@ -164,6 +164,7 @@ class SectionProcessor(ABC):
 
 
 class KernelProcessor(SectionProcessor):
+    # uImage format https://github.com/u-boot/u-boot/blob/master/include/image.h
     _UIMAGE_MAGIC = b'\x27\x05\x19\x56'
 
     _COMPRESSION_MAP = {
@@ -176,7 +177,6 @@ class KernelProcessor(SectionProcessor):
     }
 
     def process(self, section: GSDFSection, output_dir: Path, auto: bool = False) -> None:
-        # uImage format https://github.com/u-boot/u-boot/blob/master/include/image.h
         if len(section.data) < 0x40 or section.data[:4] != self._UIMAGE_MAGIC:
             logger.warning(f"{section.type_.name} is not a uImage file - skipping processor")
             return
@@ -438,7 +438,7 @@ class GSDFArchive:
             logger.debug(f"unpacked {str(sec_type)} to {str(dest_path)} ({section.size} bytes)")
 
             processor = ProcessorFactory.get_processor(sec_type)
-            if processor:
+            if processor is not None:
                 processor.process(section, out_path, auto=auto_process)
 
     def create(self, output_path: str, sources: List[Path], key_path: Optional[Path] = None) -> None:
@@ -586,18 +586,19 @@ def main() -> None:
     logging.basicConfig(level=level, format="%(levelname)s: GSDF %(message)s", stream=sys.stderr)
 
     try:
-        if args.command == "read":
-            gsdf = GSDFArchive.from_stream(args.source)
-            gsdf.verify()
-            logger.info(f"file {args.source} is valid")
-            gsdf.report()
-            if args.extract:
-                gsdf.extract(args.extract, auto_process=args.process)
-        elif args.command == "create":
-            gsdf = GSDFArchive(payload_type=args.payload)
-            source_paths = [Path(s) for s in args.source]
-            gsdf.create(args.output, sources=source_paths, key_path=args.key)
-    except (ValueError, ValidationError, ConnectionError, FileNotFoundError) as e:
+        match args.command:
+            case "read":
+                gsdf = GSDFArchive.from_stream(args.source)
+                gsdf.verify()
+                logger.info(f"file {args.source} is valid")
+                gsdf.report()
+                if args.extract:
+                    gsdf.extract(args.extract, auto_process=args.process)
+            case "create":
+                gsdf = GSDFArchive(payload_type=args.payload)
+                source_paths = [Path(s) for s in args.source]
+                gsdf.create(args.output, sources=source_paths, key_path=args.key)
+    except Exception as e:
         logger.error(f"{e}")
         sys.exit(1)
 

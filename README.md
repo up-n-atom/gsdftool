@@ -118,7 +118,7 @@ Outputs to `stderr`
 python gsdftool.py -vv read file.gsdf --extract ./files
 ```
 
-### Processing
+### Extra processors
 
 The following payload sections can be further extracted:
 
@@ -165,3 +165,17 @@ dnf -y install squashfs-tools dtc uboot-tools gzip bzip2 xz-lzma-compat lzop lz4
 | 4            | Data Offset | Absolute offset in the file where this section data begins |
 | 4            | Data Size   | Size of the raw data in bytes                              |
 | 4            | Padding     | Reserved for alignment                                     |
+
+
+## To-do
+
+- [ ] Evaluate external dependencies
+  - [ ] uboot-tols -> [pyUboot](https://github.com/molejar/pyUBoot)
+  - [ ] squashfs-tools -> [PySquashfsImage](https://github.com/matteomattei/PySquashfsImage)
+  - [ ] gzip -> `import zlib`
+  - [ ] bzip2 -> `import lzo`
+  - [ ] lzma -> `import lzma`
+  - [ ] lzo -> `import lzo`
+  - [ ] lz4 -> `import lz4`
+  - [ ] zstd -> `import zstandard`
+  

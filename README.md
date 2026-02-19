@@ -173,7 +173,7 @@ dnf -y install squashfs-tools dtc uboot-tools gzip bzip2 xz-lzma-compat lzop lz4
   - [ ] uboot-tols -> [pyUboot](https://github.com/molejar/pyUBoot)
   - [ ] squashfs-tools -> [PySquashfsImage](https://github.com/matteomattei/PySquashfsImage)
   - [ ] gzip -> `import zlib`
-  - [ ] bzip2 -> `import lzo`
+  - [ ] bzip2 -> `import bz2`
   - [ ] lzma -> `import lzma`
   - [ ] lzo -> `import lzo`
   - [ ] lz4 -> `import lz4`

@@ -527,7 +527,7 @@ class GSDFArchive:
 
         for sec_type in self:
             section = self[sec_type]
-            if sec_type in (SectionType.ROOT_CERT, SectionType.SECOND_CERT):
+            if sec_type in (SectionType.ROOT_CERT, SectionType.SECOND_CERT, SectionType.KERNEL_ARGS):
                 preview = section.data[:45].decode("ascii", errors="ignore").replace("\n", "<CR>")
             else:
                 preview = section.data[:16].hex(" ")

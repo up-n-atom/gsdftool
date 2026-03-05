@@ -81,6 +81,9 @@ class GSDFHeader:
         if self.timestamp is None:
             self.timestamp = int(datetime.now().timestamp())
 
+    def __bytes__(self) -> bytes:
+        return self.to_bytes()
+
     @classmethod
     def from_bytes(cls, data: memoryview) -> GSDFHeader:
         if data[:len(cls.MAGIC)] != cls.MAGIC:
@@ -111,6 +114,9 @@ class GSDFSection:
     offset: int = -1
 
     FORMAT: ClassVar[str] = ">III4x"
+
+    def __bytes__(self) -> bytes:
+        return self.to_bytes()
 
     @property
     def size(self) -> int:
@@ -490,12 +496,12 @@ class GSDFArchive:
         # Section Table
         for i, sec_type in enumerate(sorted_types):
             self.sections[sec_type].offset = offset
-            data[0x60+(i*16):0x60+(i+1)*16] = self.sections[sec_type].to_bytes()
+            data[0x60+(i*16):0x60+(i+1)*16] = bytes(self.sections[sec_type])
             offset += self.sections[sec_type].size
 
         # Header
         self.header.size = offset
-        data[0:0x60] = self.header.to_bytes()
+        data[0:0x60] = bytes(self.header)
 
         # Hashes & Signature
         data[0x1A0:0x1C0] = hashlib.sha256(payload).digest()

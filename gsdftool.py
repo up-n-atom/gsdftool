@@ -81,9 +81,6 @@ class GSDFHeader:
         if self.timestamp is None:
             self.timestamp = int(datetime.now().timestamp())
 
-    def __bytes__(self) -> bytes:
-        return self.to_bytes()
-
     @classmethod
     def from_bytes(cls, data: memoryview) -> GSDFHeader:
         if data[:len(cls.MAGIC)] != cls.MAGIC:
@@ -106,6 +103,9 @@ class GSDFHeader:
             self.name.encode("ascii")[:63]
         )
 
+    def __bytes__(self) -> bytes:
+        return self.to_bytes()
+
 
 @dataclass
 class GSDFSection:
@@ -114,9 +114,6 @@ class GSDFSection:
     offset: int = -1
 
     FORMAT: ClassVar[str] = ">III4x"
-
-    def __bytes__(self) -> bytes:
-        return self.to_bytes()
 
     @property
     def size(self) -> int:
@@ -138,6 +135,9 @@ class GSDFSection:
                 f"Payload must start at or after 0x2E0."
             )
         return struct.pack(self.FORMAT, self.type_.value, self.offset, self.size)
+
+    def __bytes__(self) -> bytes:
+        return self.to_bytes()
 
 
 class SectionProcessor(ABC):
